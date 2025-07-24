@@ -2,8 +2,10 @@ import {
   Connection,
   GetVersionedTransactionConfig,
   Finality,
-  TransactionResponse,
+  ParsedTransactionWithMeta,
+  PublicKey,
 } from "@solana/web3.js";
+import { AccountLayout } from "@solana/spl-token";
 import { RPC_ENDPOINT } from "../../config/config";
 import { PROCESSED, CONFIRMED, FINALIZED } from "../../config/constant";
 
@@ -27,13 +29,13 @@ class SolanaWeb3Service {
     }
   }
 
-  public async getTransaction(signature: string): Promise<TransactionResponse> {
+  public async getTransaction(signature: string): Promise<ParsedTransactionWithMeta> {
     try {
       const config: GetVersionedTransactionConfig = {
         commitment: "confirmed" as Finality,
         maxSupportedTransactionVersion: 0,
       };
-      const transaction = await this.connection.getTransaction(
+      const transaction = await this.connection.getParsedTransaction(
         signature,
         config
       );
@@ -45,6 +47,35 @@ class SolanaWeb3Service {
       return transaction;
     } catch (error: any) {
       throw new Error(`Error fetching transaction: ${error.message}`);
+    }
+  }
+
+  public async getTokenAddressAndOwnerFromTokenAccount(
+    tokenAccountAddress: string
+  ): Promise<{ tokenAddress: string; ownerAddress: string }> {
+    try {
+      const tokenAccountPubkey = new PublicKey(tokenAccountAddress);
+      const accountInfo = await this.connection.getAccountInfo(
+        tokenAccountPubkey
+      );
+
+      if (accountInfo === null) {
+        throw new Error(
+          `Token account with address ${tokenAccountAddress} not found.`
+        );
+      }
+
+      const accountData = AccountLayout.decode(accountInfo.data);
+      const mintAddress = new PublicKey(accountData.mint);
+
+      const tokenAddress = mintAddress.toBase58();
+      const ownerAddress = new PublicKey(accountData.owner).toBase58();
+
+      return { tokenAddress, ownerAddress };
+    } catch (error: any) {
+      throw new Error(
+        `Error fetching token address and owner: ${error.message}`
+      );
     }
   }
 }
