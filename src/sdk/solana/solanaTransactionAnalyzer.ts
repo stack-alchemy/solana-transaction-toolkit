@@ -4,7 +4,8 @@ import {
   PartiallyDecodedInstruction,
   ParsedInstruction,
 } from "@solana/web3.js";
-import { SwapInfo } from "../../utils/types";
+import { SwapInfo, TokenAmount } from "../../utils/types";
+import { solanaWeb3Service } from "./solanaWeb3Service";
 
 const extractPoolId = (
   instruction: ParsedInstruction | PartiallyDecodedInstruction
@@ -56,14 +57,66 @@ export const transactionAnalyzer = async (
         if (Object.values(DEX_PROGRAMS).includes(programId)) {
           const sourceToken = (instructions[j + 1] as any)?.parsed?.info;
           const destinationToken = (instructions[j + 2] as any)?.parsed?.info;
+
           if (sourceToken && destinationToken) {
+            let sourceTokenMint: string, sourceTokenAmount: TokenAmount;
+            if ("mint" in sourceToken) {
+              sourceTokenMint = sourceToken.mint;
+              sourceTokenAmount = sourceToken.tokenAmount;
+            } else {
+              const { tokenAddress } =
+                await solanaWeb3Service.getTokenAddressAndOwnerFromTokenAccount(
+                  sourceToken.source
+                );
+              sourceTokenMint = tokenAddress;
+              const sourceTokenDecimals =
+                await solanaWeb3Service.getTokenDecimals(sourceTokenMint);
+              sourceTokenAmount = {
+                amount: sourceToken.amount,
+                decimals: sourceTokenDecimals,
+                uiAmount: sourceToken.amount / 10 ** sourceTokenDecimals,
+                uiAmountString: String(
+                  sourceToken.amount / 10 ** sourceTokenDecimals
+                ),
+              };
+            }
+
+            let destinationTokenMint: string,
+              destinationTokenAmount: TokenAmount;
+            if ("mint" in destinationToken) {
+              destinationTokenMint = destinationToken.mint;
+              destinationTokenAmount = destinationToken.tokenAmount;
+            } else {
+              const { tokenAddress } =
+                await solanaWeb3Service.getTokenAddressAndOwnerFromTokenAccount(
+                  destinationToken.destination
+                );
+              destinationTokenMint = tokenAddress;
+              const destinationTokenDecimals =
+                await solanaWeb3Service.getTokenDecimals(destinationTokenMint);
+              destinationTokenAmount = {
+                amount: destinationToken.amount,
+                decimals: destinationTokenDecimals,
+                uiAmount:
+                  destinationToken.amount / 10 ** destinationTokenDecimals,
+                uiAmountString: String(
+                  destinationToken.amount / 10 ** destinationTokenDecimals
+                ),
+              };
+            }
+
+            const poolId = extractPoolId(instructions[j]);
+            if (!poolId) {
+              throw new Error("Pool ID could not be extracted from the instruction.");
+            }
+
             const swapInfo: SwapInfo = {
               programId,
-              poolId: extractPoolId(instructions[j]),
-              sourceTokenMint: sourceToken.mint,
-              destinationTokenMint: destinationToken.mint,
-              sourceTokenAmount: sourceToken.tokenAmount,
-              destinationTokenAmount: destinationToken.tokenAmount,
+              poolId,
+              sourceTokenMint,
+              destinationTokenMint,
+              sourceTokenAmount,
+              destinationTokenAmount,
             };
 
             swapInfos.push(swapInfo);

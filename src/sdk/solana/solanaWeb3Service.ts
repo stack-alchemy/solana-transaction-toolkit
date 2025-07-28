@@ -2,17 +2,31 @@ import {
   Connection,
   GetVersionedTransactionConfig,
   Finality,
+  Keypair,
   ParsedTransactionWithMeta,
   PublicKey,
+  AddressLookupTableAccount,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+  ComputeBudgetProgram,
 } from "@solana/web3.js";
-import { AccountLayout } from "@solana/spl-token";
-import { RPC_ENDPOINT } from "../../config/config";
+import {
+  AccountLayout,
+  createAssociatedTokenAccount,
+  MintLayout,
+  getAssociatedTokenAddress,
+} from "@solana/spl-token";
+import bs58 from "bs58";
+import { RPC_ENDPOINT, PRIVATE_KEY } from "../../config/config";
 import { PROCESSED, CONFIRMED, FINALIZED } from "../../config/constant";
 
 class SolanaWeb3Service {
-  private connection: Connection;
+  private keypair: Keypair;
+  public connection: Connection;
 
   constructor(rpcEndpoint: string) {
+    this.keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
     this.connection = new Connection(rpcEndpoint, CONFIRMED);
   }
 
@@ -29,7 +43,24 @@ class SolanaWeb3Service {
     }
   }
 
-  public async getTransaction(signature: string): Promise<ParsedTransactionWithMeta> {
+  public async getComputeBudgetInstruction(): Promise<
+    TransactionInstruction[]
+  > {
+    const instructions = [
+      ComputeBudgetProgram.setComputeUnitLimit({
+        units: 250000,
+      }),
+      ComputeBudgetProgram.setComputeUnitPrice({
+        microLamports: 10000,
+      }),
+    ];
+
+    return instructions;
+  }
+
+  public async getTransaction(
+    signature: string
+  ): Promise<ParsedTransactionWithMeta> {
     try {
       const config: GetVersionedTransactionConfig = {
         commitment: "confirmed" as Finality,
@@ -75,6 +106,111 @@ class SolanaWeb3Service {
     } catch (error: any) {
       throw new Error(
         `Error fetching token address and owner: ${error.message}`
+      );
+    }
+  }
+
+  public async getTokenDecimals(mintAddress: string): Promise<number> {
+    try {
+      const mintPubkey = new PublicKey(mintAddress);
+      const mintInfo = await this.connection.getAccountInfo(mintPubkey);
+
+      if (mintInfo === null) {
+        throw new Error(`Mint account with address ${mintAddress} not found.`);
+      }
+
+      const mintData = MintLayout.decode(mintInfo.data);
+      return mintData.decimals;
+    } catch (error: any) {
+      throw new Error(`Error fetching token decimals: ${error.message}`);
+    }
+  }
+
+  public async getTokenAccount(
+    tokenAddress: string,
+    ownerAddress: string
+  ): Promise<string> {
+    try {
+      const tokenPubkey = new PublicKey(tokenAddress);
+      const ownerPubkey = new PublicKey(ownerAddress);
+      const associatedTokenAddress = await getAssociatedTokenAddress(
+        tokenPubkey,
+        ownerPubkey
+      );
+
+      return associatedTokenAddress.toBase58();
+    } catch (error: any) {
+      throw new Error(`Error fetching token account: ${error.message}`);
+    }
+  }
+
+  public async getAddressLookupTable(
+    account: PublicKey
+  ): Promise<AddressLookupTableAccount> {
+    try {
+      const lookupTable = await this.connection.getAddressLookupTable(account);
+      if (!lookupTable || !lookupTable.value) {
+        throw new Error(
+          `Lookup table for account ${account.toBase58()} not found.`
+        );
+      }
+      return lookupTable.value;
+    } catch (error: any) {
+      throw new Error(`Error fetching address lookup table: ${error.message}`);
+    }
+  }
+
+  public async sendTransaction(
+    instructions: TransactionInstruction[],
+    alts: AddressLookupTableAccount[]
+  ): Promise<string> {
+    try {
+      const blockhash = (await this.connection.getLatestBlockhash(FINALIZED))
+        .blockhash;
+      const messageV0 = new TransactionMessage({
+        payerKey: this.keypair.publicKey,
+        recentBlockhash: blockhash,
+        instructions: instructions,
+      }).compileToV0Message(alts);
+
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([this.keypair]);
+
+      const signature = await this.connection.sendRawTransaction(
+        transaction.serialize(),
+        { skipPreflight: true, preflightCommitment: FINALIZED, maxRetries: 3 }
+      );
+
+      return signature;
+    } catch (error: any) {
+      throw new Error(`Error sending transaction: ${error.message}`);
+    }
+  }
+
+  public async createTokenAccount(tokenAddress: string): Promise<string> {
+    try {
+      const tokenPubkey = new PublicKey(tokenAddress);
+      const ownerPubkey = this.keypair.publicKey;
+      const tokenAccount = await getAssociatedTokenAddress(
+        tokenPubkey,
+        ownerPubkey
+      );
+      const accountInfo = await this.connection.getAccountInfo(tokenAccount);
+      if (accountInfo) {
+        throw new Error("Token account already exists.");
+      }
+
+      const newTokenAccount = await createAssociatedTokenAccount(
+        this.connection,
+        this.keypair,
+        tokenPubkey,
+        ownerPubkey
+      );
+
+      return newTokenAccount.toBase58();
+    } catch (error: any) {
+      throw new Error(
+        `Error creating a token account for ${tokenAddress}: ${error.message}`
       );
     }
   }

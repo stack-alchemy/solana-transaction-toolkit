@@ -12,3 +12,5 @@ export const DEX_PROGRAMS = {
   METEORA_DLMM: "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",
   METEORA_DAMM_V2: "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
 };
+
+export const SLIPPAGE_TOLERANCE: number = 0
