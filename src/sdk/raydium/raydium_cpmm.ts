@@ -1,7 +1,5 @@
 import {
   ApiV3PoolInfoStandardItemCpmm,
-  CpmmKeys,
-  CpmmRpcData,
   CurveCalculator,
   makeSwapCpmmBaseInInstruction,
 } from "@raydium-io/raydium-sdk-v2";
@@ -10,6 +8,7 @@ import BN from "bn.js";
 import { isValidCpmm, getPdaObservationId } from "./utils";
 import { TransactionInstruction, PublicKey } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { solanaWeb3Service } from "../solana/solanaWeb3Service";
 
 export const swap = async (
   inputMint: string,
@@ -17,7 +16,6 @@ export const swap = async (
   amount: number
 ): Promise<{
   innerInstructions: TransactionInstruction[];
-  alts: string[];
   outAmount: number;
 }> => {
   const raydium = await raydiumInstance.getInstance();
@@ -46,14 +44,17 @@ export const swap = async (
     new PublicKey(poolInfo.mintB.address),
   ];
 
-  const [mintATokenAccount, mintBTokenAccount] = await Promise.all([
-    raydium.account.getAssociatedTokenAccount(
-      new PublicKey(poolInfo.mintA.address)
-    ),
-    raydium.account.getAssociatedTokenAccount(
-      new PublicKey(poolInfo.mintB.address)
-    ),
-  ]);
+  const mintATokenAccount = solanaWeb3Service.tokenAccounts.get(
+    poolInfo.mintA.address
+  );
+
+  const mintBTokenAccount = solanaWeb3Service.tokenAccounts.get(
+    poolInfo.mintB.address
+  );
+
+  if (!mintATokenAccount || !mintBTokenAccount) {
+    throw new Error("Associated token accounts not found for the pool mints");
+  }
 
   const baseIn = inputMint === poolInfo.mintA.address;
 
@@ -91,8 +92,7 @@ export const swap = async (
   );
 
   const innerInstructions: TransactionInstruction[] = [instruction];
-  const alts: string[] = [];
   const outAmount = swapResult.destinationAmountSwapped.toNumber();
 
-  return { innerInstructions, alts, outAmount };
+  return { innerInstructions, outAmount };
 };

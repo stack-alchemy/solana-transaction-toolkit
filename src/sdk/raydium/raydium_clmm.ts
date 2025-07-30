@@ -4,12 +4,16 @@ import {
   ComputeClmmPoolInfo,
   PoolUtils,
   ReturnTypeFetchMultiplePoolTickArrays,
+  ClmmInstrument,
+  MIN_SQRT_PRICE_X64,
+  MAX_SQRT_PRICE_X64,
 } from "@raydium-io/raydium-sdk-v2";
 import { raydiumInstance, TX_VERSION } from "./config";
 import { SLIPPAGE_TOLERANCE } from "../../config/constant";
 import BN from "bn.js";
 import { isValidClmm } from "./utils";
-import { TransactionInstruction } from "@solana/web3.js";
+import { TransactionInstruction, PublicKey } from "@solana/web3.js";
+import { solanaWeb3Service } from "../solana/solanaWeb3Service";
 
 export const swap = async (
   inputMint: string,
@@ -17,7 +21,6 @@ export const swap = async (
   amount: number
 ): Promise<{
   innerInstructions: TransactionInstruction[];
-  alts: string[];
   outAmount: number;
 }> => {
   const raydium = await raydiumInstance.getInstance();
@@ -52,6 +55,18 @@ export const swap = async (
     throw new Error("input mint does not match pool");
 
   const baseIn = inputMint === poolInfo.mintA.address;
+  const sqrtPriceLimitX64 = baseIn
+    ? MIN_SQRT_PRICE_X64.add(new BN(1))
+    : MAX_SQRT_PRICE_X64.sub(new BN(1));
+  const tokenAccountA = solanaWeb3Service.tokenAccounts.get(
+    poolInfo.mintA.address
+  );
+  const tokenAccountB = solanaWeb3Service.tokenAccounts.get(
+    poolInfo.mintB.address
+  );
+  if (!tokenAccountA || !tokenAccountB) {
+    throw new Error("Associated token accounts not found for the pool mints");
+  }
 
   const { minAmountOut, remainingAccounts } =
     await PoolUtils.computeAmountOutFormat({
@@ -63,26 +78,24 @@ export const swap = async (
       epochInfo: await raydium.fetchEpochInfo(),
     });
 
-  const { builder } = await raydium.clmm.swap({
+  const { instructions } = ClmmInstrument.makeSwapBaseInInstructions({
     poolInfo,
     poolKeys,
-    inputMint: poolInfo[baseIn ? "mintA" : "mintB"].address,
-    amountIn: inputAmount,
-    amountOutMin: minAmountOut.amount.raw,
     observationId: clmmPoolInfo.observationId,
     ownerInfo: {
-      useSOLBalance: false, // if wish to use existed wsol token account, pass false
+      wallet: raydium.owner?.publicKey!,
+      tokenAccountA: tokenAccountA!,
+      tokenAccountB: tokenAccountB!,
     },
+    inputMint: new PublicKey(inputMint),
+    amountIn: inputAmount,
+    amountOutMin: minAmountOut.amount.raw,
+    sqrtPriceLimitX64,
     remainingAccounts,
-    associatedOnly: true,
-    checkCreateATAOwner: false,
-    txVersion: TX_VERSION,
   });
 
-  const innerInstructions: TransactionInstruction[] =
-    builder.AllTxData.instructions;
-  const alts: string[] = builder.AllTxData.lookupTableAddress;
+  const innerInstructions: TransactionInstruction[] = instructions;
   const outAmount = minAmountOut.amount.raw.toNumber();
 
-  return { innerInstructions, alts, outAmount };
+  return { innerInstructions, outAmount };
 };

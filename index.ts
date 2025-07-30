@@ -3,56 +3,86 @@ import { solanaWeb3Service } from "./src/sdk/solana/solanaWeb3Service";
 import { transactionAnalyzer } from "./src/sdk/solana/solanaTransactionAnalyzer";
 import { logger } from "./src/logger/logger";
 import { raydiumInstance } from "./src/sdk/raydium/config";
-import { PublicKey, AddressLookupTableAccount } from "@solana/web3.js";
+import { PublicKey, AddressLookupTableAccount, Keypair } from "@solana/web3.js";
+import { closeAccount } from "@solana/spl-token";
 import { swap as raydiumAMMSwap } from "./src/sdk/raydium/raydium_amm";
 import { swap as raydiumClmmSwap } from "./src/sdk/raydium/raydium_clmm";
 import { swap as raydiumCpmmSwap } from "./src/sdk/raydium/raydium_cpmm";
 
-(async () => {
-  console.time("Transaction Analysis");
-  // const transaction = await solanaWeb3Service.getTransaction("5Rece9JAAVd8oSjRFgBnixAyfRwpXjHTq4LNTDEdLYGswK55WQWzu3MB28mG5Mcr87byLfLhL8GFpgn3NrFCwerM");
-  // const swapInfos = await transactionAnalyzer(transaction)
-  // console.log(swapInfos);
+function getSwapFunction(programId: string) {
+  if (programId === "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK") {
+    return raydiumClmmSwap;
+  }
+  if (programId === "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C") {
+    return raydiumCpmmSwap;
+  }
+  if (programId === "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8") {
+    return raydiumAMMSwap;
+  }
+  throw new Error(`Unknown programId: ${programId}`);
+}
 
-  const poolId = "69ZvRfF9K7c9DsRTouisoeKc7G5Lm1Gz4moKgRjGhsJV";
-  const inputMint = "So11111111111111111111111111111111111111112";
-  const outputMint = "2oQNkePakuPbHzrVVkQ875WHeewLHCd2cAwfwiLQbonk";
-  const owner = "HJdXLsg3YjJCoRXiSqUn9RJh8fSpw6Lcwa56LuvzFpez";
-  const amount = 0.0001 * 1e9;
-  const { innerInstructions, alts } = await raydiumCpmmSwap(
-    inputMint,
-    poolId,
-    amount
-  );
+(async () => {
+  await raydiumInstance.getInstance();
+  await solanaWeb3Service.getAllTokenAccounts();
   const computeBudgetInstructions =
     await solanaWeb3Service.getComputeBudgetInstruction();
-  // const { innerTransaction, amountOut } = await getRaydiumCPMMSwapInstructions(
-  //   poolId,
-  //   owner,
-  //   inputMint,
-  //   outputMint,
-  //   amount
-  // );
-  const instructions = [...computeBudgetInstructions, ...innerInstructions];
+  const tokenAccounts = solanaWeb3Service.tokenAccounts;
+  let instructions: any[] = [...computeBudgetInstructions];
 
-  const addressLookupTableAccounts: AddressLookupTableAccount[] =
-    await Promise.all(
-      alts.map(async (alt) => {
-        const pubkey = new PublicKey(alt);
-        return await solanaWeb3Service.getAddressLookupTable(pubkey);
-      })
+  console.time("Transaction Analysis");
+  const transaction = await solanaWeb3Service.getTransaction(
+    "2DSNpyFeGNJrJhK1wHXv1967EkvudccaeqVVhD3t9tKRoY4u1Kz7zmumGvnXmgJ9ArpdvLCL4YpP3UfCqSKUxSyL"
+  );
+  const { swapInfos, addressLookupTableAccounts } = await transactionAnalyzer(
+    transaction
+  );
+
+  const tokenMints = new Set<string>();
+  swapInfos.forEach((info) => {
+    tokenMints.add(info.sourceTokenMint);
+    tokenMints.add(info.destinationTokenMint);
+  });
+
+  const missedTokenAccounts: string[] = Array.from(tokenMints).filter(
+    (mint) => !tokenAccounts.has(mint)
+  );
+
+  if (missedTokenAccounts.length > 0) {
+    const createInstructions = await Promise.all(
+      missedTokenAccounts.map((mint) => solanaWeb3Service.createTokenAccount(mint))
     );
+    instructions.push(...createInstructions);
+  }
 
-  console.log("Instructions:", instructions);
-  console.log("Address Lookup Table Accounts:", addressLookupTableAccounts);
-  const signature = await solanaWeb3Service.sendTransaction(instructions, addressLookupTableAccounts);
+  let inputAmount = 0.0001 * 1e9; // Use raw amount for first swap
+  
+  let lastSwapOutputAmount: number = 0;
+
+  for (let i = 0; i < swapInfos.length; i++) {
+    const { programId, poolId, sourceTokenMint } = swapInfos[i];
+    const swapFn = getSwapFunction(programId);
+
+    // For subsequent swaps, use previous output as input
+    if (i > 0) {
+      inputAmount = lastSwapOutputAmount;
+    }
+
+    const swapResult = await swapFn(sourceTokenMint, poolId, inputAmount);
+
+    instructions.push(...swapResult.innerInstructions);
+    lastSwapOutputAmount = swapResult.outAmount;
+  }
+
+  const signature = await solanaWeb3Service.sendTransaction(
+    instructions,
+    addressLookupTableAccounts
+  );
   console.log("Signature:", signature);
 
-  // const tokenAccount = await solanaWeb3Service.createTokenAccount(outputMint)
+  // const tokenAccount = await solanaWeb3Service.closeTokenAccount("BMro4xUVc91uLRtSYGSUC5zHXu2bMCqTuY7EBaAC7pXL")
   // console.log(tokenAccount)
-  // const instance = await raydiumInstance.getInstance()
-  // const pubkey = new PublicKey("HJdXLsg3YjJCoRXiSqUn9RJh8fSpw6Lcwa56LuvzFpez")
-  // const tokenAccountData = await raydiumInstance.fetchTokenAccountData(pubkey)
-  // console.log(tokenAccountData)
+  // console.log(solanaWeb3Service.tokenAccounts)
+
   console.timeEnd("Transaction Analysis");
 })();

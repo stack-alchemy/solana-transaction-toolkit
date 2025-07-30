@@ -3,6 +3,7 @@ import {
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
   ParsedInstruction,
+  AddressLookupTableAccount,
 } from "@solana/web3.js";
 import { SwapInfo, TokenAmount } from "../../utils/types";
 import { solanaWeb3Service } from "./solanaWeb3Service";
@@ -37,11 +38,27 @@ const extractPoolId = (
 
 export const transactionAnalyzer = async (
   transaction: ParsedTransactionWithMeta
-): Promise<SwapInfo[]> => {
+): Promise<{
+  swapInfos: SwapInfo[];
+  addressLookupTableAccounts: AddressLookupTableAccount[];
+}> => {
   try {
     const innerInstructions = transaction.meta?.innerInstructions;
+
     if (!innerInstructions || innerInstructions.length === 0) {
       throw new Error("No inner instructions found in the transaction.");
+    }
+
+    let addressLookupTableAccounts: AddressLookupTableAccount[] = [];
+    const accounts = transaction.transaction.message.addressTableLookups?.map(
+      (account) => account.accountKey
+    );
+    if (accounts && accounts?.length > 0) {
+      addressLookupTableAccounts = await Promise.all(
+        accounts.map(async (account) => {
+          return await solanaWeb3Service.getAddressLookupTable(account);
+        })
+      );
     }
 
     const swapInfos: SwapInfo[] = [];
@@ -107,7 +124,9 @@ export const transactionAnalyzer = async (
 
             const poolId = extractPoolId(instructions[j]);
             if (!poolId) {
-              throw new Error("Pool ID could not be extracted from the instruction.");
+              throw new Error(
+                "Pool ID could not be extracted from the instruction."
+              );
             }
 
             const swapInfo: SwapInfo = {
@@ -131,7 +150,7 @@ export const transactionAnalyzer = async (
       throw new Error("No swap information found in the transaction.");
     }
 
-    return swapInfos;
+    return { swapInfos, addressLookupTableAccounts };
   } catch (error: any) {
     throw new Error(`Error analyzing transaction: ${error.message}`);
   }

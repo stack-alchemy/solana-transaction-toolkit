@@ -1,19 +1,22 @@
 import {
   ApiV3PoolInfoStandardItem,
+  makeAMMSwapInstruction,
 } from "@raydium-io/raydium-sdk-v2";
-import { raydiumInstance, TX_VERSION } from "./config";
+import { raydiumInstance } from "./config";
 import { SLIPPAGE_TOLERANCE } from "../../config/constant";
 import BN from "bn.js";
 import { isValidAmm } from "./utils";
-import {
-  TransactionInstruction,
-} from "@solana/web3.js";
+import { TransactionInstruction } from "@solana/web3.js";
+import { solanaWeb3Service } from "../solana/solanaWeb3Service";
 
 export const swap = async (
   inputMint: string,
   poolId: string,
   amount: number
-): Promise<{ innerInstructions: TransactionInstruction[]; alts: string[]; outAmount: number }> => {
+): Promise<{
+  innerInstructions: TransactionInstruction[];
+  outAmount: number;
+}> => {
   const raydium = await raydiumInstance.getInstance();
 
   const [data, poolKeys, rpcData] = await Promise.all([
@@ -43,6 +46,16 @@ export const swap = async (
     ? [poolInfo.mintA, poolInfo.mintB]
     : [poolInfo.mintB, poolInfo.mintA];
 
+  const mintInTokenAccount = solanaWeb3Service.tokenAccounts.get(
+    mintIn.address
+  );
+  const mintOutTokenAccount = solanaWeb3Service.tokenAccounts.get(
+    mintOut.address
+  );
+  if (!mintInTokenAccount || !mintOutTokenAccount) {
+    throw new Error("Associated token accounts not found for the pool mints");
+  }
+
   const out = raydium.liquidity.computeAmountOut({
     poolInfo: {
       ...poolInfo,
@@ -56,25 +69,28 @@ export const swap = async (
     mintOut: mintOut.address,
     slippage: SLIPPAGE_TOLERANCE, // range: 1 ~ 0.0001, means 100% ~ 0.01%
   });
-  
-  const { builder } = await raydium.liquidity.swap({
-    poolInfo,
+
+  let version = 4;
+  if (poolInfo.pooltype.includes("StablePool")) version = 5;
+
+  const amountIn = new BN(amount)
+  const amountOut = out.minAmountOut
+
+  const instruction = makeAMMSwapInstruction({
+    version,
     poolKeys,
-    amountIn: new BN(amount),
-    amountOut: out.minAmountOut, // out.amountOut means amount 'without' slippage
+    userKeys: {
+      tokenAccountIn: mintInTokenAccount!,
+      tokenAccountOut: mintOutTokenAccount!,
+      owner: raydium.owner?.publicKey!,
+    },
+    amountIn,
+    amountOut,
     fixedSide: "in",
-    inputMint: mintIn.address,
-    txVersion: TX_VERSION,
-    config: {
-      associatedOnly: true,
-      inputUseSolBalance: false,
-      outputUseSolBalance: false
-    }
   });
 
-  const innerInstructions: TransactionInstruction[] = builder.AllTxData.instructions;
-  const alts: string[] = builder.AllTxData.lookupTableAddress;
-  const outAmount = out.amountOut.toNumber()
+  const innerInstructions: TransactionInstruction[] = [instruction];
+  const outAmount = out.amountOut.toNumber();
 
-  return { innerInstructions, alts, outAmount };
+  return { innerInstructions, outAmount };
 };

@@ -16,13 +16,19 @@ import {
   createAssociatedTokenAccount,
   MintLayout,
   getAssociatedTokenAddress,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+  closeAccount,
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountIdempotentInstruction,
 } from "@solana/spl-token";
 import bs58 from "bs58";
 import { RPC_ENDPOINT, PRIVATE_KEY } from "../../config/config";
-import { PROCESSED, CONFIRMED, FINALIZED } from "../../config/constant";
+import { CONFIRMED, FINALIZED } from "../../config/constant";
 
 class SolanaWeb3Service {
   private keypair: Keypair;
+  public tokenAccounts: Map<string, PublicKey> = new Map();
   public connection: Connection;
 
   constructor(rpcEndpoint: string) {
@@ -56,6 +62,63 @@ class SolanaWeb3Service {
     ];
 
     return instructions;
+  }
+
+  public async createTokenAccount(
+    mintAddress: string
+  ): Promise<TransactionInstruction> {
+    try {
+      const mintPubkey = new PublicKey(mintAddress);
+      const mintInfo = await this.connection.getAccountInfo(mintPubkey);
+      if (!mintInfo) {
+        throw new Error(`Mint account with address ${mintAddress} not found.`);
+      }
+
+      const owner = mintInfo.owner.toBase58();
+      let programId: PublicKey;
+      if (owner === TOKEN_PROGRAM_ID.toBase58()) {
+        programId = TOKEN_PROGRAM_ID;
+      } else if (owner === TOKEN_2022_PROGRAM_ID.toBase58()) {
+        programId = TOKEN_2022_PROGRAM_ID;
+      } else {
+        throw new Error(`Unsupported token program: ${owner}`);
+      }
+
+      const ata = getAssociatedTokenAddressSync(
+        mintPubkey,
+        this.keypair.publicKey,
+        false,
+        programId
+      );
+      const instruction = createAssociatedTokenAccountIdempotentInstruction(
+        this.keypair.publicKey,
+        ata,
+        this.keypair.publicKey,
+        mintPubkey,
+        programId
+      );
+
+      this.tokenAccounts.set(mintAddress, ata);
+      return instruction;
+    } catch (error: any) {
+      throw new Error(`Error creating a token account: ${error.message}`);
+    }
+  }
+
+  public async closeTokenAccount(tokenAccount: string): Promise<string> {
+    try {
+      const tokenAccountPubkey = new PublicKey(tokenAccount);
+      const signature = await closeAccount(
+        this.connection,
+        this.keypair,
+        tokenAccountPubkey,
+        this.keypair.publicKey,
+        this.keypair
+      );
+      return signature;
+    } catch (error: any) {
+      throw new Error(`Error closing token account: ${error.message}`);
+    }
   }
 
   public async getTransaction(
@@ -144,6 +207,29 @@ class SolanaWeb3Service {
     }
   }
 
+  public async getAllTokenAccounts(): Promise<void> {
+    try {
+      const ownerPubkey = this.keypair.publicKey;
+      const accounts = await this.connection.getParsedTokenAccountsByOwner(
+        ownerPubkey,
+        {
+          programId: TOKEN_PROGRAM_ID,
+        }
+      );
+      // Clear previous map
+      this.tokenAccounts.clear();
+      // Map to include mint address for each token account and push to tokenAccounts
+      accounts.value.forEach((acc: any) => {
+        const mint = acc.account.data.parsed.info.mint;
+        const pubkey = acc.pubkey;
+        this.tokenAccounts.set(mint, pubkey);
+      });
+      return;
+    } catch (error: any) {
+      throw new Error(`Error fetching all token accounts: ${error.message}`);
+    }
+  }
+
   public async getAddressLookupTable(
     account: PublicKey
   ): Promise<AddressLookupTableAccount> {
@@ -187,33 +273,33 @@ class SolanaWeb3Service {
     }
   }
 
-  public async createTokenAccount(tokenAddress: string): Promise<string> {
-    try {
-      const tokenPubkey = new PublicKey(tokenAddress);
-      const ownerPubkey = this.keypair.publicKey;
-      const tokenAccount = await getAssociatedTokenAddress(
-        tokenPubkey,
-        ownerPubkey
-      );
-      const accountInfo = await this.connection.getAccountInfo(tokenAccount);
-      if (accountInfo) {
-        throw new Error("Token account already exists.");
-      }
+  // public async createTokenAccount(tokenAddress: string): Promise<string> {
+  //   try {
+  //     const tokenPubkey = new PublicKey(tokenAddress);
+  //     const ownerPubkey = this.keypair.publicKey;
+  //     const tokenAccount = await getAssociatedTokenAddress(
+  //       tokenPubkey,
+  //       ownerPubkey
+  //     );
+  //     const accountInfo = await this.connection.getAccountInfo(tokenAccount);
+  //     if (accountInfo) {
+  //       throw new Error("Token account already exists.");
+  //     }
 
-      const newTokenAccount = await createAssociatedTokenAccount(
-        this.connection,
-        this.keypair,
-        tokenPubkey,
-        ownerPubkey
-      );
+  //     const newTokenAccount = await createAssociatedTokenAccount(
+  //       this.connection,
+  //       this.keypair,
+  //       tokenPubkey,
+  //       ownerPubkey
+  //     );
 
-      return newTokenAccount.toBase58();
-    } catch (error: any) {
-      throw new Error(
-        `Error creating a token account for ${tokenAddress}: ${error.message}`
-      );
-    }
-  }
+  //     return newTokenAccount.toBase58();
+  //   } catch (error: any) {
+  //     throw new Error(
+  //       `Error creating a token account for ${tokenAddress}: ${error.message}`
+  //     );
+  //   }
+  // }
 }
 
 export const solanaWeb3Service = new SolanaWeb3Service(RPC_ENDPOINT);
