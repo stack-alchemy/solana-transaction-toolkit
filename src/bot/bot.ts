@@ -50,7 +50,7 @@ export const copyTransaction = async (
       instructions.push(...createInstructions);
     }
 
-    let inputAmount = 0.0001 * 1e9; // Use raw amount for first swap
+    let inputAmount = 0.001 * 1e9; // Use raw amount for first swap
     let initInputAmount = inputAmount;
     let lastSwapOutputAmount: number = 0;
 
@@ -84,6 +84,6 @@ export const copyTransaction = async (
 
     logger.info("Transaction copied successfully:", txHash);
   } catch (error: any) {
-    throw new Error(`Failed to copy transaction: ${error.message}`);
+    throw new Error(error.message);
   }
 };
