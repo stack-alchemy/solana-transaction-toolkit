@@ -78,7 +78,7 @@ export const swap = async (
       epochInfo: await raydium.fetchEpochInfo(),
     });
 
-  const { instructions } = ClmmInstrument.makeSwapBaseInInstructions({
+  const { instructions } = await ClmmInstrument.makeSwapBaseInInstructions({
     poolInfo,
     poolKeys,
     observationId: clmmPoolInfo.observationId,

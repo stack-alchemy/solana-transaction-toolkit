@@ -56,7 +56,7 @@ export const swap = async (
     throw new Error("Associated token accounts not found for the pool mints");
   }
 
-  const out = raydium.liquidity.computeAmountOut({
+  const out = await raydium.liquidity.computeAmountOut({
     poolInfo: {
       ...poolInfo,
       baseReserve,
@@ -76,7 +76,7 @@ export const swap = async (
   const amountIn = new BN(amount)
   const amountOut = out.minAmountOut
 
-  const instruction = makeAMMSwapInstruction({
+  const instruction = await makeAMMSwapInstruction({
     version,
     poolKeys,
     userKeys: {

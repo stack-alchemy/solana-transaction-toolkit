@@ -58,14 +58,14 @@ export const swap = async (
 
   const baseIn = inputMint === poolInfo.mintA.address;
 
-  const swapResult = CurveCalculator.swap(
+  const swapResult = await CurveCalculator.swap(
     inputAmount,
     baseIn ? rpcData.baseReserve : rpcData.quoteReserve,
     baseIn ? rpcData.quoteReserve : rpcData.baseReserve,
     rpcData.configInfo!.tradeFeeRate
   );
 
-  const instruction: TransactionInstruction = makeSwapCpmmBaseInInstruction(
+  const instruction: TransactionInstruction = await makeSwapCpmmBaseInInstruction(
     new PublicKey(poolInfo.programId),
     raydium.owner?.publicKey!,
     new PublicKey(poolKeys.authority),

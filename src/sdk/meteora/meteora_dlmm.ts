@@ -52,7 +52,7 @@ export const swap = async (
     );
 
     const { slices, accounts: transferHookAccounts } =
-      dlmmPool.getPotentialToken2022IxDataAndAccounts(ActionType.Liquidity);
+      await dlmmPool.getPotentialToken2022IxDataAndAccounts(ActionType.Liquidity);
 
     const swapIx = await dlmmPool.program.methods
       .swap2(inputAmount, swapQuote.minOutAmount, { slices })

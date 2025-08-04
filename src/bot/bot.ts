@@ -25,11 +25,12 @@ export const copyTransaction = async (
 ): Promise<void> => {
   try {
     // console.time("Transaction Copying");
-    let instructions: TransactionInstruction[] = [...computeBudgetInstructions];
+    const instructions: TransactionInstruction[] = [...computeBudgetInstructions];
     const transaction = await solanaWeb3Service.getTransaction(signature);
     const { swapInfos, addressLookupTableAccounts } = await transactionAnalyzer(
       transaction
     );
+    await solanaWeb3Service.getAllTokenAccounts();
 
     const tokenMints = new Set<string>();
     swapInfos.forEach((info) => {
