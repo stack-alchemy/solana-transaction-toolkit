@@ -13,7 +13,6 @@ import {
 } from "@solana/web3.js";
 import {
   AccountLayout,
-  createAssociatedTokenAccount,
   MintLayout,
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
@@ -30,9 +29,11 @@ class SolanaWeb3Service {
   private keypair: Keypair;
   public tokenAccounts: Map<string, PublicKey> = new Map();
   public connection: Connection;
+  public userAddress: PublicKey;
 
   constructor(rpcEndpoint: string) {
     this.keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+    this.userAddress = this.keypair.publicKey;
     this.connection = new Connection(rpcEndpoint, CONFIRMED);
   }
 
@@ -267,39 +268,37 @@ class SolanaWeb3Service {
         { skipPreflight: true, preflightCommitment: FINALIZED, maxRetries: 3 }
       );
 
+      const res = await this.confirmTransaction(signature);
+      if (res !== "") {
+        throw new Error(`Transaction failed to confirm: ${signature}`);
+      }
+
       return signature;
     } catch (error: any) {
       throw new Error(`Error sending transaction: ${error.message}`);
     }
   }
 
-  // public async createTokenAccount(tokenAddress: string): Promise<string> {
-  //   try {
-  //     const tokenPubkey = new PublicKey(tokenAddress);
-  //     const ownerPubkey = this.keypair.publicKey;
-  //     const tokenAccount = await getAssociatedTokenAddress(
-  //       tokenPubkey,
-  //       ownerPubkey
-  //     );
-  //     const accountInfo = await this.connection.getAccountInfo(tokenAccount);
-  //     if (accountInfo) {
-  //       throw new Error("Token account already exists.");
-  //     }
-
-  //     const newTokenAccount = await createAssociatedTokenAccount(
-  //       this.connection,
-  //       this.keypair,
-  //       tokenPubkey,
-  //       ownerPubkey
-  //     );
-
-  //     return newTokenAccount.toBase58();
-  //   } catch (error: any) {
-  //     throw new Error(
-  //       `Error creating a token account for ${tokenAddress}: ${error.message}`
-  //     );
-  //   }
-  // }
+  public async confirmTransaction(
+    txId: string
+  ): Promise<string> {
+    this.connection.getSignatureStatuses([txId]);
+    return new Promise((resolve, reject) => {
+      const id = setTimeout(reject, 60 * 1000);
+      this.connection.onSignature(
+        txId,
+        (signatureResult) => {
+          clearTimeout(id);
+          if (!signatureResult.err) {
+            resolve("");
+            return;
+          }
+          reject(Object.assign(signatureResult.err, { txId }));
+        },
+        CONFIRMED
+      );
+    });
+  }
 }
 
 export const solanaWeb3Service = new SolanaWeb3Service(RPC_ENDPOINT);

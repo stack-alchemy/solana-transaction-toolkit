@@ -5,6 +5,7 @@ import {
   ParsedInstruction,
   AddressLookupTableAccount,
 } from "@solana/web3.js";
+import { NATIVE_MINT } from "@solana/spl-token";
 import { SwapInfo, TokenAmount } from "../../utils/types";
 import { solanaWeb3Service } from "./solanaWeb3Service";
 
@@ -25,12 +26,12 @@ const extractPoolId = (
       return instruction.accounts[2].toBase58();
     case DEX_PROGRAMS.RAYDIUM_CPMM:
       return instruction.accounts[3].toBase58();
-    case DEX_PROGRAMS.METEORA_AMM:
-      return instruction.accounts[0].toBase58();
+    // case DEX_PROGRAMS.METEORA_AMM:
+    //   return instruction.accounts[0].toBase58();
     case DEX_PROGRAMS.METEORA_DLMM:
       return instruction.accounts[0].toBase58();
-    case DEX_PROGRAMS.METEORA_DAMM_V2:
-      return instruction.accounts[1].toBase58();
+    // case DEX_PROGRAMS.METEORA_DAMM_V2:
+    //   return instruction.accounts[1].toBase58();
     default:
       throw new Error(`Unknown DEX program ID: ${programId}`);
   }
@@ -146,8 +147,20 @@ export const transactionAnalyzer = async (
       }
     }
 
-    if (swapInfos.length === 0) {
+    const swapInfoLength = swapInfos.length;
+
+    if (swapInfoLength === 0) {
       throw new Error("No swap information found in the transaction.");
+    }
+
+    if (
+      swapInfos[0].sourceTokenMint !== NATIVE_MINT.toBase58() ||
+      swapInfos[swapInfoLength - 1].destinationTokenMint !==
+        NATIVE_MINT.toBase58()
+    ) {
+      throw new Error(
+        "Transaction must start with a native token and end with a native token."
+      );
     }
 
     return { swapInfos, addressLookupTableAccounts };
