@@ -10,6 +10,8 @@ import {
   TransactionMessage,
   VersionedTransaction,
   ComputeBudgetProgram,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
   AccountLayout,
@@ -30,6 +32,18 @@ class SolanaWeb3Service {
   private keypair: Keypair;
   public connection: Connection;
   public userAddress: PublicKey;
+  public tipAccounts = [
+    "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
+    "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
+    "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
+    "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
+    "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD",
+    "2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ",
+    "wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF",
+    "3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT",
+    "4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey",
+    "4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or",
+  ];
 
   constructor(rpcEndpoint: string) {
     this.keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -252,6 +266,60 @@ class SolanaWeb3Service {
       return lookupTable.value;
     } catch (error: any) {
       throw new Error(`Error fetching address lookup table: ${error.message}`);
+    }
+  }
+
+  public async sendTransactionWithTip(
+    instructions: TransactionInstruction[],
+    alts: AddressLookupTableAccount[]
+  ): Promise<string> {
+    try {
+      const blockhash = (await this.connection.getLatestBlockhash(FINALIZED))
+        .blockhash;
+      const tipInstruction = SystemProgram.transfer({
+        fromPubkey: this.keypair.publicKey,
+        toPubkey: new PublicKey(
+          this.tipAccounts[Math.floor(Math.random() * this.tipAccounts.length)]
+        ),
+        lamports: 0.001 * LAMPORTS_PER_SOL,
+      });
+      instructions.push(tipInstruction);
+
+      const messageV0 = new TransactionMessage({
+        payerKey: this.keypair.publicKey,
+        recentBlockhash: blockhash,
+        instructions: instructions,
+      }).compileToV0Message(alts);
+
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([this.keypair]);
+
+      const endpoint = "http://slc-sender.helius-rpc.com/fast"; // choose the region closest to your servers
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now().toString(),
+          method: "sendTransaction",
+          params: [
+            Buffer.from(transaction.serialize()).toString("base64"),
+            {
+              encoding: "base64",
+              skipPreflight: true, // Required for Sender
+              maxRetries: 0,
+            },
+          ],
+        }),
+      });
+      const json = await response.json();
+      if (json.error) {
+        throw new Error(json.error.message);
+      }
+      const signature = json.result;
+      return signature
+    } catch (error: any) {
+      throw new Error(`Error sending transaction with tip: ${error.message}`);
     }
   }
 

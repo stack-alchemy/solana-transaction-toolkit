@@ -14,7 +14,12 @@ const main = async (
   try {
     await copyTransaction(signature, computeBudgetInstructions);
   } catch (error: any) {
-    logger.error(`${signature}: ${error.message}`);
+    if (
+      !error.message.includes("Unknown DEX") &&
+      !error.message.includes("No inner instructions")
+    ) {
+      logger.error(`${signature}: ${error.message}`);
+    }
   }
 };
 
@@ -44,7 +49,7 @@ run();
 
 // (async () => {
 // const signature =
-//   "3YC85k2wXtb6AatkWCcN32ws7zZ5dNysp39VJis6MrKKbcatNGP2dtSnMmapA71HcRWv1QSTTkVArjntC4cMgeQa";
+//   "3hp8c7FyekQX4psijcAsXtSke3vN6WdDWwmZUF53gZc1c2vjw1HxnkZpJeyLy764x11pDwowGQaqJkuR1ZVsbGcB";
 //   const transaction = await solanaWeb3Service.getTransaction(signature);
 //   const { swapInfos, addressLookupTableAccounts } = await transactionAnalyzer(
 //     transaction

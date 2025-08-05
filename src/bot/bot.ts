@@ -91,19 +91,25 @@ export const copyTransaction = async (
       lastSwapOutputAmount = swapResult.outAmount;
     }
 
-    if (initInputAmount > lastSwapOutputAmount) {
-      throw new Error(
-        `Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`)
-    }
-
     instructions.push(...postInstructions);
 
-    const txHash = await solanaWeb3Service.sendTransaction(
-      instructions,
-      addressLookupTableAccounts
-    );
-
-    logger.info(`Transaction copied successfully: ${txHash}`);
+    if (initInputAmount > lastSwapOutputAmount) {
+      throw new Error(
+        `Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`
+      );
+    } else if (lastSwapOutputAmount - initInputAmount <= 0.001) {
+      const txHash = await solanaWeb3Service.sendTransaction(
+        instructions,
+        addressLookupTableAccounts
+      );
+      logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
+    } else {
+      const txHash = await solanaWeb3Service.sendTransactionWithTip(
+        instructions,
+        addressLookupTableAccounts
+      );
+      logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
+    }
   } catch (error: any) {
     throw new Error(error.message);
   }
