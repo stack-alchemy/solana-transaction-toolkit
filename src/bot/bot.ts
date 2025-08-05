@@ -60,7 +60,7 @@ export const copyTransaction = async (
       });
     }
 
-    let inputAmount = 0.001 * 1e9; // Use raw amount for first swap
+    let inputAmount = 0.05 * 1e9; // Use raw amount for first swap
     let initInputAmount = inputAmount;
     let lastSwapOutputAmount: number = 0;
 
