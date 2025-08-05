@@ -97,7 +97,7 @@ export const copyTransaction = async (
       throw new Error(
         `Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`
       );
-    } else if (lastSwapOutputAmount - initInputAmount <= 0.001) {
+    } else if (lastSwapOutputAmount - initInputAmount < 0.001 * 1e9) {
       const txHash = await solanaWeb3Service.sendTransaction(
         instructions,
         addressLookupTableAccounts
