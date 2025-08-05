@@ -16,7 +16,8 @@ const main = async (
   } catch (error: any) {
     if (
       !error.message.includes("Unknown DEX") &&
-      !error.message.includes("No inner instructions")
+      !error.message.includes("No inner instructions") &&
+      !error.message.includes("No swap information")
     ) {
       logger.error(`${signature}: ${error.message}`);
     }
