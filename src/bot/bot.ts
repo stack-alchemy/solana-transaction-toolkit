@@ -1,15 +1,15 @@
 import { solanaWeb3Service } from "../sdk/solana/solanaWeb3Service";
 import { transactionAnalyzer } from "../sdk/solana/solanaTransactionAnalyzer";
 import { raydiumInstance } from "../sdk/raydium/config";
-import { getSwapFunction } from "../utils/helper";
+import { getSwapInstance } from "../utils/helper";
 import { logger } from "../logger/logger";
-import { TransactionInstruction } from "@solana/web3.js";
+import { TransactionInstruction, PublicKey } from "@solana/web3.js";
+import { NATIVE_MINT } from "@solana/spl-token";
 
 export const initBot = async (): Promise<TransactionInstruction[]> => {
   try {
     logger.info("Initializing bot...");
     await raydiumInstance.getInstance();
-    await solanaWeb3Service.getAllTokenAccounts();
     const computeBudgetInstructions =
       await solanaWeb3Service.getComputeBudgetInstruction();
     logger.info("Bot initialized successfully.");
@@ -24,47 +24,68 @@ export const copyTransaction = async (
   computeBudgetInstructions: TransactionInstruction[]
 ): Promise<void> => {
   try {
-    // console.time("Transaction Copying");
-    const instructions: TransactionInstruction[] = [...computeBudgetInstructions];
-    const transaction = await solanaWeb3Service.getTransaction(signature);
+    const instructions: TransactionInstruction[] = [
+      ...computeBudgetInstructions,
+    ];
+    const postInstructions: TransactionInstruction[] = [];
+    const [transaction, nativeMintTokenAccount] = await Promise.all([
+      solanaWeb3Service.getTransaction(signature),
+      solanaWeb3Service.getTokenAccount(NATIVE_MINT.toBase58()),
+    ]);
     const { swapInfos, addressLookupTableAccounts } = await transactionAnalyzer(
       transaction
     );
-    await solanaWeb3Service.getAllTokenAccounts();
 
     const tokenMints = new Set<string>();
+    const tokenAccounts: Map<string, PublicKey> = new Map();
+    tokenAccounts.set(NATIVE_MINT.toBase58(), nativeMintTokenAccount);
+
     swapInfos.forEach((info) => {
       tokenMints.add(info.sourceTokenMint);
       tokenMints.add(info.destinationTokenMint);
     });
+    tokenMints.delete(NATIVE_MINT.toBase58());
 
-    const missedTokenAccounts: string[] = Array.from(tokenMints).filter(
-      (mint) => !solanaWeb3Service.tokenAccounts.has(mint)
-    );
-
-    if (missedTokenAccounts.length > 0) {
-      const createInstructions = await Promise.all(
-        missedTokenAccounts.map((mint) =>
+    if (tokenMints.size > 0) {
+      const tokenAccountInstructions = await Promise.all(
+        Array.from(tokenMints).map((mint) =>
           solanaWeb3Service.createTokenAccount(mint)
         )
       );
-      instructions.push(...createInstructions);
+
+      tokenAccountInstructions.map((item, index) => {
+        instructions.push(item.createInstruction);
+        postInstructions.push(item.closeInstruction);
+        tokenAccounts.set(item.mintAddress, item.tokenAccount);
+      });
     }
 
     let inputAmount = 0.001 * 1e9; // Use raw amount for first swap
     let initInputAmount = inputAmount;
     let lastSwapOutputAmount: number = 0;
 
+    const swapInstances = swapInfos.map(({ programId }) =>
+      getSwapInstance(programId)
+    );
+    await Promise.all(
+      swapInfos.map(({ poolId, sourceTokenMint }, i) =>
+        swapInstances[i].init(sourceTokenMint, poolId)
+      )
+    );
+
     for (let i = 0; i < swapInfos.length; i++) {
-      const { programId, poolId, sourceTokenMint } = swapInfos[i];
-      const swapFn = getSwapFunction(programId);
+      const { sourceTokenMint } = swapInfos[i];
 
       // For subsequent swaps, use previous output as input
       if (i > 0) {
         inputAmount = lastSwapOutputAmount;
       }
 
-      const swapResult = await swapFn(sourceTokenMint, poolId, inputAmount);
+      const swapResult = await swapInstances[i].swap(
+        inputAmount,
+        sourceTokenMint,
+        tokenAccounts
+      );
 
       instructions.push(...swapResult.innerInstructions);
       lastSwapOutputAmount = swapResult.outAmount;
@@ -75,15 +96,14 @@ export const copyTransaction = async (
         `Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`)
     }
 
+    instructions.push(...postInstructions);
+
     const txHash = await solanaWeb3Service.sendTransaction(
       instructions,
       addressLookupTableAccounts
     );
-    // console.timeEnd("Transaction Copying");
 
-    await solanaWeb3Service.getAllTokenAccounts();
-
-    logger.info("Transaction copied successfully:", txHash);
+    logger.info(`Transaction copied successfully: ${txHash}`);
   } catch (error: any) {
     throw new Error(error.message);
   }

@@ -3,15 +3,17 @@ import {
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
   ParsedInstruction,
+  ParsedInnerInstruction,
+  ParsedAddressTableLookup,
   AddressLookupTableAccount,
 } from "@solana/web3.js";
 import { NATIVE_MINT } from "@solana/spl-token";
-import { SwapInfo, TokenAmount } from "../../utils/types";
+import { SwapInfo } from "../../utils/types";
 import { solanaWeb3Service } from "./solanaWeb3Service";
 
-const extractPoolId = (
+const extractPoolId = async (
   instruction: ParsedInstruction | PartiallyDecodedInstruction
-): string => {
+): Promise<string> => {
   if ("parsed" in instruction) {
     throw new Error(
       "Parsed instruction is not supported for pool ID extraction."
@@ -37,6 +39,79 @@ const extractPoolId = (
   }
 };
 
+const fetchAddressLookupTableAccounts = async (
+  alts: ParsedAddressTableLookup[] | null | undefined
+): Promise<AddressLookupTableAccount[]> => {
+  const addressLookupTableAccounts: AddressLookupTableAccount[] = [];
+  const accounts = alts?.map((account) => account.accountKey);
+  if (accounts && accounts?.length > 0) {
+    await Promise.all(
+      accounts.map(async (account) => {
+        const alt = await solanaWeb3Service.getAddressLookupTable(account);
+        addressLookupTableAccounts.push(alt);
+      })
+    );
+  }
+  return addressLookupTableAccounts;
+};
+
+const fetchTokenMint = async (tokenInfo: any): Promise<string> => {
+  let tokenMint: string;
+  if ("mint" in tokenInfo) {
+    tokenMint = tokenInfo.mint;
+  } else {
+    const { tokenAddress } =
+      await solanaWeb3Service.getTokenAddressAndOwnerFromTokenAccount(
+        tokenInfo.source
+      );
+    tokenMint = tokenAddress;
+  }
+  return tokenMint;
+};
+
+const fetchSwapInfos = async (
+  innerInstructions: ParsedInnerInstruction[]
+): Promise<SwapInfo[]> => {
+  const swapInfos: SwapInfo[] = [];
+
+  for (let i = 0; i < innerInstructions.length; i++) {
+    if (!innerInstructions[i] || !innerInstructions[i].instructions) {
+      continue;
+    }
+
+    const instructions = innerInstructions[i].instructions;
+    for (let j = 0; j < instructions.length; j++) {
+      const programId = instructions[j].programId.toBase58();
+      if (Object.values(DEX_PROGRAMS).includes(programId)) {
+        const sourceToken = (instructions[j + 1] as any)?.parsed?.info;
+        const destinationToken = (instructions[j + 2] as any)?.parsed?.info;
+
+        if (sourceToken && destinationToken) {
+          const [sourceTokenMint, destinationTokenMint, poolId] =
+            await Promise.all([
+              fetchTokenMint(sourceToken),
+              fetchTokenMint(destinationToken),
+              extractPoolId(instructions[j]),
+            ]);
+
+          const swapInfo: SwapInfo = {
+            programId,
+            poolId,
+            sourceTokenMint,
+            destinationTokenMint,
+          };
+
+          swapInfos.push(swapInfo);
+
+          j += 2; // Skip the next two instructions as they are part of the swap
+        }
+      }
+    }
+  }
+
+  return swapInfos;
+};
+
 export const transactionAnalyzer = async (
   transaction: ParsedTransactionWithMeta
 ): Promise<{
@@ -45,107 +120,16 @@ export const transactionAnalyzer = async (
 }> => {
   try {
     const innerInstructions = transaction.meta?.innerInstructions;
+    const alts = transaction.transaction.message.addressTableLookups;
 
     if (!innerInstructions || innerInstructions.length === 0) {
       throw new Error("No inner instructions found in the transaction.");
     }
 
-    let addressLookupTableAccounts: AddressLookupTableAccount[] = [];
-    const accounts = transaction.transaction.message.addressTableLookups?.map(
-      (account) => account.accountKey
-    );
-    if (accounts && accounts?.length > 0) {
-      addressLookupTableAccounts = await Promise.all(
-        accounts.map(async (account) => {
-          return await solanaWeb3Service.getAddressLookupTable(account);
-        })
-      );
-    }
-
-    const swapInfos: SwapInfo[] = [];
-
-    for (let i = 0; i < innerInstructions.length; i++) {
-      if (!innerInstructions[i] || !innerInstructions[i].instructions) {
-        continue;
-      }
-
-      const instructions = innerInstructions[i].instructions;
-      for (let j = 0; j < instructions.length; j++) {
-        const programId = instructions[j].programId.toBase58();
-        if (Object.values(DEX_PROGRAMS).includes(programId)) {
-          const sourceToken = (instructions[j + 1] as any)?.parsed?.info;
-          const destinationToken = (instructions[j + 2] as any)?.parsed?.info;
-
-          if (sourceToken && destinationToken) {
-            let sourceTokenMint: string, sourceTokenAmount: TokenAmount;
-            if ("mint" in sourceToken) {
-              sourceTokenMint = sourceToken.mint;
-              sourceTokenAmount = sourceToken.tokenAmount;
-            } else {
-              const { tokenAddress } =
-                await solanaWeb3Service.getTokenAddressAndOwnerFromTokenAccount(
-                  sourceToken.source
-                );
-              sourceTokenMint = tokenAddress;
-              const sourceTokenDecimals =
-                await solanaWeb3Service.getTokenDecimals(sourceTokenMint);
-              sourceTokenAmount = {
-                amount: sourceToken.amount,
-                decimals: sourceTokenDecimals,
-                uiAmount: sourceToken.amount / 10 ** sourceTokenDecimals,
-                uiAmountString: String(
-                  sourceToken.amount / 10 ** sourceTokenDecimals
-                ),
-              };
-            }
-
-            let destinationTokenMint: string,
-              destinationTokenAmount: TokenAmount;
-            if ("mint" in destinationToken) {
-              destinationTokenMint = destinationToken.mint;
-              destinationTokenAmount = destinationToken.tokenAmount;
-            } else {
-              const { tokenAddress } =
-                await solanaWeb3Service.getTokenAddressAndOwnerFromTokenAccount(
-                  destinationToken.destination
-                );
-              destinationTokenMint = tokenAddress;
-              const destinationTokenDecimals =
-                await solanaWeb3Service.getTokenDecimals(destinationTokenMint);
-              destinationTokenAmount = {
-                amount: destinationToken.amount,
-                decimals: destinationTokenDecimals,
-                uiAmount:
-                  destinationToken.amount / 10 ** destinationTokenDecimals,
-                uiAmountString: String(
-                  destinationToken.amount / 10 ** destinationTokenDecimals
-                ),
-              };
-            }
-
-            const poolId = extractPoolId(instructions[j]);
-            if (!poolId) {
-              throw new Error(
-                "Pool ID could not be extracted from the instruction."
-              );
-            }
-
-            const swapInfo: SwapInfo = {
-              programId,
-              poolId,
-              sourceTokenMint,
-              destinationTokenMint,
-              sourceTokenAmount,
-              destinationTokenAmount,
-            };
-
-            swapInfos.push(swapInfo);
-
-            j += 2; // Skip the next two instructions as they are part of the swap
-          }
-        }
-      }
-    }
+    const [swapInfos, addressLookupTableAccounts] = await Promise.all([
+      fetchSwapInfos(innerInstructions),
+      fetchAddressLookupTableAccounts(alts),
+    ]);
 
     const swapInfoLength = swapInfos.length;
 
@@ -161,6 +145,16 @@ export const transactionAnalyzer = async (
       throw new Error(
         "Transaction must start with a native token and end with a native token."
       );
+    }
+
+    for (let i = 0; i < swapInfoLength - 1; i++) {
+      if (
+        swapInfos[i].destinationTokenMint !== swapInfos[i + 1].sourceTokenMint
+      ) {
+        throw new Error(
+          "Swap transaction must be chained together with matching token mints."
+        );
+      }
     }
 
     return { swapInfos, addressLookupTableAccounts };

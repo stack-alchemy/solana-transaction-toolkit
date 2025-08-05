@@ -1,96 +1,206 @@
 import {
   ApiV3PoolInfoStandardItem,
   makeAMMSwapInstruction,
+  AmmV4Keys,
+  AmmV5Keys,
+  AmmRpcData,
+  Raydium,
 } from "@raydium-io/raydium-sdk-v2";
 import { raydiumInstance } from "./config";
 import { SLIPPAGE_TOLERANCE } from "../../config/constant";
 import BN from "bn.js";
 import { isValidAmm } from "./utils";
-import { TransactionInstruction } from "@solana/web3.js";
-import { solanaWeb3Service } from "../solana/solanaWeb3Service";
+import { TransactionInstruction, PublicKey } from "@solana/web3.js";
 
-export const swap = async (
-  inputMint: string,
-  poolId: string,
-  amount: number
-): Promise<{
-  innerInstructions: TransactionInstruction[];
-  outAmount: number;
-}> => {
-  const raydium = await raydiumInstance.getInstance();
+export class RaydiumAMMSwap {
+  private poolInfo: ApiV3PoolInfoStandardItem | undefined;
+  private poolKeys: AmmV4Keys | AmmV5Keys | undefined;
+  private rpcData: AmmRpcData | undefined;
+  private raydium: Raydium | undefined;
 
-  const [data, poolKeys, rpcData] = await Promise.all([
-    raydium.api.fetchPoolById({ ids: poolId }),
-    raydium.liquidity.getAmmPoolKeys(poolId),
-    raydium.liquidity.getRpcPoolInfo(poolId),
-  ]);
-  const poolInfo = data[0] as ApiV3PoolInfoStandardItem;
+  constructor() {}
 
-  if (!isValidAmm(poolInfo.programId))
-    throw new Error("target pool is not AMM pool");
+  public async init(inputMint: string, poolId: string): Promise<void> {
+    try {
+      const raydium = await raydiumInstance.getInstance();
 
-  const [baseReserve, quoteReserve, status] = [
-    rpcData.baseReserve,
-    rpcData.quoteReserve,
-    rpcData.status.toNumber(),
-  ];
+      const [data, poolKeys, rpcData] = await Promise.all([
+        raydium.api.fetchPoolById({ ids: poolId }),
+        raydium.liquidity.getAmmPoolKeys(poolId),
+        raydium.liquidity.getRpcPoolInfo(poolId),
+      ]);
+      const poolInfo = data[0] as ApiV3PoolInfoStandardItem;
 
-  if (
-    poolInfo.mintA.address !== inputMint &&
-    poolInfo.mintB.address !== inputMint
-  )
-    throw new Error("input mint does not match pool");
+      if (!isValidAmm(poolInfo.programId))
+        throw new Error("target pool is not AMM pool");
 
-  const baseIn = inputMint === poolInfo.mintA.address;
-  const [mintIn, mintOut] = baseIn
-    ? [poolInfo.mintA, poolInfo.mintB]
-    : [poolInfo.mintB, poolInfo.mintA];
+      if (
+        poolInfo.mintA.address !== inputMint &&
+        poolInfo.mintB.address !== inputMint
+      )
+        throw new Error("input mint does not match pool");
 
-  const mintInTokenAccount = solanaWeb3Service.tokenAccounts.get(
-    mintIn.address
-  );
-  const mintOutTokenAccount = solanaWeb3Service.tokenAccounts.get(
-    mintOut.address
-  );
-  if (!mintInTokenAccount || !mintOutTokenAccount) {
-    throw new Error("Associated token accounts not found for the pool mints");
+      this.poolInfo = poolInfo;
+      this.poolKeys = poolKeys;
+      this.rpcData = rpcData;
+      this.raydium = raydium;
+
+      return;
+    } catch (error: any) {
+      throw new Error(`Error in Raydium AMM init: ${error.message}`);
+    }
   }
 
-  const out = await raydium.liquidity.computeAmountOut({
-    poolInfo: {
-      ...poolInfo,
-      baseReserve,
-      quoteReserve,
-      status,
-      version: 4,
-    },
-    amountIn: new BN(amount),
-    mintIn: mintIn.address,
-    mintOut: mintOut.address,
-    slippage: SLIPPAGE_TOLERANCE, // range: 1 ~ 0.0001, means 100% ~ 0.01%
-  });
+  public async swap(
+    amount: number,
+    inputMint: string,
+    tokenAccounts: Map<string, PublicKey>
+  ): Promise<{
+    innerInstructions: TransactionInstruction[];
+    outAmount: number;
+  }> {
+    try {
+      if (!this.poolInfo || !this.poolKeys || !this.rpcData || !this.raydium) {
+        throw new Error("Raydium AMM not initialized");
+      }
 
-  let version = 4;
-  if (poolInfo.pooltype.includes("StablePool")) version = 5;
+      const inputAmount = new BN(amount);
+      const baseIn = inputMint === this.poolInfo.mintA.address;
 
-  const amountIn = new BN(amount)
-  const amountOut = out.minAmountOut
+      const [mintIn, mintOut] = baseIn
+        ? [this.poolInfo.mintA, this.poolInfo.mintB]
+        : [this.poolInfo.mintB, this.poolInfo.mintA];
 
-  const instruction = await makeAMMSwapInstruction({
-    version,
-    poolKeys,
-    userKeys: {
-      tokenAccountIn: mintInTokenAccount!,
-      tokenAccountOut: mintOutTokenAccount!,
-      owner: raydium.owner?.publicKey!,
-    },
-    amountIn,
-    amountOut,
-    fixedSide: "in",
-  });
+      const mintInTokenAccount = tokenAccounts.get(mintIn.address);
+      const mintOutTokenAccount = tokenAccounts.get(mintOut.address);
+      if (!mintInTokenAccount || !mintOutTokenAccount) {
+        throw new Error(
+          "Associated token accounts not found for the pool mints"
+        );
+      }
 
-  const innerInstructions: TransactionInstruction[] = [instruction];
-  const outAmount = out.amountOut.toNumber();
+      const out = await this.raydium.liquidity.computeAmountOut({
+        poolInfo: {
+          ...this.poolInfo,
+          baseReserve: this.rpcData.baseReserve,
+          quoteReserve: this.rpcData.quoteReserve,
+          status: this.rpcData.status.toNumber(),
+          version: 4,
+        },
+        amountIn: inputAmount,
+        mintIn: mintIn.address,
+        mintOut: mintOut.address,
+        slippage: SLIPPAGE_TOLERANCE, // range: 1 ~ 0.0001, means 100% ~ 0.01%
+      });
 
-  return { innerInstructions, outAmount };
-};
+      let version = 4;
+      if (this.poolInfo.pooltype.includes("StablePool")) version = 5;
+
+      const instruction = await makeAMMSwapInstruction({
+        version,
+        poolKeys: this.poolKeys,
+        userKeys: {
+          tokenAccountIn: mintInTokenAccount!,
+          tokenAccountOut: mintOutTokenAccount!,
+          owner: this.raydium.owner?.publicKey!,
+        },
+        amountIn: inputAmount,
+        amountOut: out.minAmountOut,
+        fixedSide: "in",
+      });
+
+      return {
+        innerInstructions: [instruction],
+        outAmount: out.amountOut.toNumber(),
+      };
+    } catch (error: any) {
+      throw new Error(`Error in Raydium AMM swap: ${error.message}`)
+    }
+  }
+}
+
+// export const swap = async (
+//   inputMint: string,
+//   poolId: string,
+//   amount: number
+// ): Promise<{
+//   innerInstructions: TransactionInstruction[];
+//   outAmount: number;
+// }> => {
+//   const raydium = await raydiumInstance.getInstance();
+
+//   const [data, poolKeys, rpcData] = await Promise.all([
+//     raydium.api.fetchPoolById({ ids: poolId }),
+//     raydium.liquidity.getAmmPoolKeys(poolId),
+//     raydium.liquidity.getRpcPoolInfo(poolId),
+//   ]);
+//   const poolInfo = data[0] as ApiV3PoolInfoStandardItem;
+
+//   if (!isValidAmm(poolInfo.programId))
+//     throw new Error("target pool is not AMM pool");
+
+//   const [baseReserve, quoteReserve, status] = [
+//     rpcData.baseReserve,
+//     rpcData.quoteReserve,
+//     rpcData.status.toNumber(),
+//   ];
+
+//   if (
+//     poolInfo.mintA.address !== inputMint &&
+//     poolInfo.mintB.address !== inputMint
+//   )
+//     throw new Error("input mint does not match pool");
+
+//   const baseIn = inputMint === poolInfo.mintA.address;
+//   const [mintIn, mintOut] = baseIn
+//     ? [poolInfo.mintA, poolInfo.mintB]
+//     : [poolInfo.mintB, poolInfo.mintA];
+
+//   const mintInTokenAccount = solanaWeb3Service.tokenAccounts.get(
+//     mintIn.address
+//   );
+//   const mintOutTokenAccount = solanaWeb3Service.tokenAccounts.get(
+//     mintOut.address
+//   );
+//   if (!mintInTokenAccount || !mintOutTokenAccount) {
+//     throw new Error("Associated token accounts not found for the pool mints");
+//   }
+
+//   const out = await raydium.liquidity.computeAmountOut({
+//     poolInfo: {
+//       ...poolInfo,
+//       baseReserve,
+//       quoteReserve,
+//       status,
+//       version: 4,
+//     },
+//     amountIn: new BN(amount),
+//     mintIn: mintIn.address,
+//     mintOut: mintOut.address,
+//     slippage: SLIPPAGE_TOLERANCE, // range: 1 ~ 0.0001, means 100% ~ 0.01%
+//   });
+
+//   let version = 4;
+//   if (poolInfo.pooltype.includes("StablePool")) version = 5;
+
+//   const amountIn = new BN(amount);
+//   const amountOut = out.minAmountOut;
+
+//   const instruction = await makeAMMSwapInstruction({
+//     version,
+//     poolKeys,
+//     userKeys: {
+//       tokenAccountIn: mintInTokenAccount!,
+//       tokenAccountOut: mintOutTokenAccount!,
+//       owner: raydium.owner?.publicKey!,
+//     },
+//     amountIn,
+//     amountOut,
+//     fixedSide: "in",
+//   });
+
+//   const innerInstructions: TransactionInstruction[] = [instruction];
+//   const outAmount = out.amountOut.toNumber();
+
+//   return { innerInstructions, outAmount };
+// };

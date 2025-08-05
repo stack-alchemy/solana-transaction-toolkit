@@ -1,14 +1,11 @@
 import {
   Raydium,
-  TxVersion,
 } from "@raydium-io/raydium-sdk-v2";
 import { Keypair } from "@solana/web3.js";
 import { FINALIZED } from "../../config/constant";
 import { solanaWeb3Service } from "../solana/solanaWeb3Service";
 import { PRIVATE_KEY } from "../../config/config";
 import bs58 from "bs58"
-
-export const TX_VERSION = TxVersion.V0;
 
 class RaydiumSDK {
   private raydium: Raydium | undefined;

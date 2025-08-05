@@ -20,6 +20,7 @@ import {
   closeAccount,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction,
+  createCloseAccountInstruction,
 } from "@solana/spl-token";
 import bs58 from "bs58";
 import { RPC_ENDPOINT, PRIVATE_KEY } from "../../config/config";
@@ -27,7 +28,6 @@ import { CONFIRMED, FINALIZED } from "../../config/constant";
 
 class SolanaWeb3Service {
   private keypair: Keypair;
-  public tokenAccounts: Map<string, PublicKey> = new Map();
   public connection: Connection;
   public userAddress: PublicKey;
 
@@ -65,9 +65,12 @@ class SolanaWeb3Service {
     return instructions;
   }
 
-  public async createTokenAccount(
-    mintAddress: string
-  ): Promise<TransactionInstruction> {
+  public async createTokenAccount(mintAddress: string): Promise<{
+    createInstruction: TransactionInstruction;
+    closeInstruction: TransactionInstruction;
+    mintAddress: string;
+    tokenAccount: PublicKey;
+  }> {
     try {
       const mintPubkey = new PublicKey(mintAddress);
       const mintInfo = await this.connection.getAccountInfo(mintPubkey);
@@ -85,22 +88,29 @@ class SolanaWeb3Service {
         throw new Error(`Unsupported token program: ${owner}`);
       }
 
-      const ata = getAssociatedTokenAddressSync(
+      const tokenAccount = getAssociatedTokenAddressSync(
         mintPubkey,
         this.keypair.publicKey,
         false,
         programId
       );
-      const instruction = createAssociatedTokenAccountIdempotentInstruction(
+      const createInstruction =
+        createAssociatedTokenAccountIdempotentInstruction(
+          this.keypair.publicKey,
+          tokenAccount,
+          this.keypair.publicKey,
+          mintPubkey,
+          programId
+        );
+      const closeInstruction = createCloseAccountInstruction(
+        tokenAccount,
         this.keypair.publicKey,
-        ata,
         this.keypair.publicKey,
-        mintPubkey,
+        [],
         programId
       );
 
-      this.tokenAccounts.set(mintAddress, ata);
-      return instruction;
+      return { createInstruction, closeInstruction, mintAddress, tokenAccount };
     } catch (error: any) {
       throw new Error(`Error creating a token account: ${error.message}`);
     }
@@ -190,26 +200,24 @@ class SolanaWeb3Service {
     }
   }
 
-  public async getTokenAccount(
-    tokenAddress: string,
-    ownerAddress: string
-  ): Promise<string> {
+  public async getTokenAccount(tokenAddress: string): Promise<PublicKey> {
     try {
       const tokenPubkey = new PublicKey(tokenAddress);
-      const ownerPubkey = new PublicKey(ownerAddress);
-      const associatedTokenAddress = await getAssociatedTokenAddress(
+      const ownerPubkey = this.keypair.publicKey;
+      const associatedTokenAccount = await getAssociatedTokenAddress(
         tokenPubkey,
         ownerPubkey
       );
 
-      return associatedTokenAddress.toBase58();
+      return associatedTokenAccount;
     } catch (error: any) {
       throw new Error(`Error fetching token account: ${error.message}`);
     }
   }
 
-  public async getAllTokenAccounts(): Promise<void> {
+  public async getAllTokenAccounts(): Promise<Map<string, PublicKey>> {
     try {
+      const tokenAccounts: Map<string, PublicKey> = new Map();
       const ownerPubkey = this.keypair.publicKey;
       const accounts = await this.connection.getParsedTokenAccountsByOwner(
         ownerPubkey,
@@ -217,15 +225,15 @@ class SolanaWeb3Service {
           programId: TOKEN_PROGRAM_ID,
         }
       );
-      // Clear previous map
-      this.tokenAccounts.clear();
+
       // Map to include mint address for each token account and push to tokenAccounts
       accounts.value.forEach((acc: any) => {
         const mint = acc.account.data.parsed.info.mint;
         const pubkey = acc.pubkey;
-        this.tokenAccounts.set(mint, pubkey);
+        tokenAccounts.set(mint, pubkey);
       });
-      return;
+
+      return tokenAccounts;
     } catch (error: any) {
       throw new Error(`Error fetching all token accounts: ${error.message}`);
     }
@@ -268,10 +276,10 @@ class SolanaWeb3Service {
         { skipPreflight: true, preflightCommitment: FINALIZED, maxRetries: 3 }
       );
 
-      const res = await this.confirmTransaction(signature);
-      if (res !== "") {
-        throw new Error(`Transaction failed to confirm: ${signature}`);
-      }
+      // const res = await this.confirmTransaction(signature);
+      // if (res !== "") {
+      //   throw new Error(`Transaction failed to confirm: ${signature}`);
+      // }
 
       return signature;
     } catch (error: any) {
@@ -279,9 +287,7 @@ class SolanaWeb3Service {
     }
   }
 
-  public async confirmTransaction(
-    txId: string
-  ): Promise<string> {
+  public async confirmTransaction(txId: string): Promise<string> {
     this.connection.getSignatureStatuses([txId]);
     return new Promise((resolve, reject) => {
       const id = setTimeout(reject, 60 * 1000);
