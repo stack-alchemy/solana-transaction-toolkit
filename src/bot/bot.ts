@@ -73,48 +73,30 @@ export const copyTransaction = async (
       )
     );
 
-    const startTime = Date.now();
-    let success = false;
+    for (let i = 0; i < swapInfos.length; i++) {
+      const { sourceTokenMint } = swapInfos[i];
+      if (i > 0) inputAmount = lastSwapOutputAmount;
 
-    while (Date.now() - startTime < 60_000) {
-      // 1 minute
-      inputAmount = initInputAmount;
-      lastSwapOutputAmount = 0;
-      instructions.length = 0; // Clear instructions if needed
-
-      for (let i = 0; i < swapInfos.length; i++) {
-        const { sourceTokenMint } = swapInfos[i];
-        if (i > 0) inputAmount = lastSwapOutputAmount;
-
-        const swapResult = await swapInstances[i].swap(
-          inputAmount,
-          sourceTokenMint,
-          tokenAccounts
-        );
-        instructions.push(...swapResult.innerInstructions);
-        lastSwapOutputAmount = swapResult.outAmount;
-      }
-
-      if (lastSwapOutputAmount > initInputAmount) {
-        success = true;
-        break;
-      }
-      // Optionally add a short delay here if needed
-    }
-
-    if (!success) {
-      throw new Error(
-        `Failed to get sufficient output after 1 minute: ${lastSwapOutputAmount} < ${initInputAmount}`
+      const swapResult = await swapInstances[i].swap(
+        inputAmount,
+        sourceTokenMint,
+        tokenAccounts
       );
+      instructions.push(...swapResult.innerInstructions);
+      lastSwapOutputAmount = swapResult.outAmount;
     }
 
     instructions.push(...postInstructions);
 
-    const txHash = await solanaWeb3Service.sendTransactionWithTip(
-      instructions,
-      addressLookupTableAccounts
-    );
-    logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
+    if (initInputAmount > lastSwapOutputAmount) {
+      throw new Error(`Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`)
+    } else {
+      const txHash = await solanaWeb3Service.sendTransactionWithTip(
+        instructions,
+        addressLookupTableAccounts
+      );
+      logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
+    }
 
     return;
   } catch (error: any) {
