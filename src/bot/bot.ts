@@ -73,43 +73,50 @@ export const copyTransaction = async (
       )
     );
 
-    for (let i = 0; i < swapInfos.length; i++) {
-      const { sourceTokenMint } = swapInfos[i];
+    const startTime = Date.now();
+    let success = false;
 
-      // For subsequent swaps, use previous output as input
-      if (i > 0) {
-        inputAmount = lastSwapOutputAmount;
+    while (Date.now() - startTime < 60_000) {
+      // 1 minute
+      inputAmount = initInputAmount;
+      lastSwapOutputAmount = 0;
+      instructions.length = 0; // Clear instructions if needed
+
+      for (let i = 0; i < swapInfos.length; i++) {
+        const { sourceTokenMint } = swapInfos[i];
+        if (i > 0) inputAmount = lastSwapOutputAmount;
+
+        const swapResult = await swapInstances[i].swap(
+          inputAmount,
+          sourceTokenMint,
+          tokenAccounts
+        );
+        instructions.push(...swapResult.innerInstructions);
+        lastSwapOutputAmount = swapResult.outAmount;
       }
 
-      const swapResult = await swapInstances[i].swap(
-        inputAmount,
-        sourceTokenMint,
-        tokenAccounts
-      );
+      if (lastSwapOutputAmount > initInputAmount) {
+        success = true;
+        break;
+      }
+      // Optionally add a short delay here if needed
+    }
 
-      instructions.push(...swapResult.innerInstructions);
-      lastSwapOutputAmount = swapResult.outAmount;
+    if (!success) {
+      throw new Error(
+        `Failed to get sufficient output after 1 minute: ${lastSwapOutputAmount} < ${initInputAmount}`
+      );
     }
 
     instructions.push(...postInstructions);
 
-    if (initInputAmount > lastSwapOutputAmount) {
-      throw new Error(
-        `Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`
-      );
-    } else if (lastSwapOutputAmount - initInputAmount < 0.001 * 1e9) {
-      const txHash = await solanaWeb3Service.sendTransaction(
-        instructions,
-        addressLookupTableAccounts
-      );
-      logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
-    } else {
-      const txHash = await solanaWeb3Service.sendTransactionWithTip(
-        instructions,
-        addressLookupTableAccounts
-      );
-      logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
-    }
+    const txHash = await solanaWeb3Service.sendTransactionWithTip(
+      instructions,
+      addressLookupTableAccounts
+    );
+    logger.info(`${signature}: Transaction copied successfully: ${txHash}`);
+
+    return;
   } catch (error: any) {
     throw new Error(error.message);
   }
