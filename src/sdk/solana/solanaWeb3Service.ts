@@ -294,7 +294,7 @@ class SolanaWeb3Service {
       const transaction = new VersionedTransaction(messageV0);
       transaction.sign([this.keypair]);
 
-      const endpoint = "http://slc-sender.helius-rpc.com/fast"; // choose the region closest to your servers
+      const endpoint = "http://ewr-sender.helius-rpc.com/fast"; // choose the region closest to your servers
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
