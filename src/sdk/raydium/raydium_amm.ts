@@ -105,13 +105,13 @@ export class RaydiumAMMSwap {
           owner: this.raydium.owner?.publicKey!,
         },
         amountIn: inputAmount,
-        amountOut: out.minAmountOut,
+        amountOut: new BN(0),
         fixedSide: "in",
       });
 
       return {
         innerInstructions: [instruction],
-        outAmount: out.amountOut.toNumber(),
+        outAmount: out.minAmountOut.toNumber(),
       };
     } catch (error: any) {
       throw new Error(`Error in Raydium AMM swap: ${error.message}`)

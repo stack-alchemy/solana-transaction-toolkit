@@ -113,7 +113,7 @@ export class RaydiumCPMMSwap {
             new PublicKey(this.poolInfo.id)
           ).publicKey,
           inputAmount,
-          swapResult.destinationAmountSwapped
+          new BN(0)
         );
 
       const innerInstructions: TransactionInstruction[] = [instruction];

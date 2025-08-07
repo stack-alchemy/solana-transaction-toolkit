@@ -86,7 +86,7 @@ export class MeteoraDLMMSwap {
         );
 
       const swapIx = await this.dlmmPool.program.methods
-        .swap2(inputAmount, swapQuote.minOutAmount, { slices })
+        .swap2(inputAmount, new BN(0), { slices })
         .accountsPartial({
           lbPair: this.dlmmPool.pubkey,
           reserveX: this.dlmmPool.lbPair.reserveX,
@@ -110,7 +110,7 @@ export class MeteoraDLMMSwap {
         .instruction();
 
       const innerInstructions: TransactionInstruction[] = [swapIx];
-      const outAmount = swapQuote.outAmount.toNumber();
+      const outAmount = swapQuote.minOutAmount.toNumber();
 
       return { innerInstructions, outAmount };
     } catch (error: any) {

@@ -117,7 +117,7 @@ export class RaydiumCLMMSwap {
         },
         inputMint: new PublicKey(inputMint),
         amountIn: inputAmount,
-        amountOutMin: minAmountOut.amount.raw,
+        amountOutMin: new BN(0),
         sqrtPriceLimitX64: sqrtPriceLimitX64,
         remainingAccounts,
       });
