@@ -46,11 +46,11 @@ const run = async () => {
   );
 };
 
-// run();
+run();
 
-(async () => {
-const signature =
-  "34dBhKUTg2LPctK567EisdaoYHAZUYivuxoV5XNDqx3LE42sgdoNd6QJtzZJ7kDDq4Syidj9tdCt6dGK1DgK7j8M";
+// (async () => {
+// const signature =
+//   "34dBhKUTg2LPctK567EisdaoYHAZUYivuxoV5XNDqx3LE42sgdoNd6QJtzZJ7kDDq4Syidj9tdCt6dGK1DgK7j8M";
 //   const transaction = await solanaWeb3Service.getTransaction(signature);
 //   const { swapInfos, addressLookupTableAccounts } = await transactionAnalyzer(
 //     transaction
@@ -58,8 +58,8 @@ const signature =
 //   console.log(swapInfos);
 // await solanaWeb3Service.getAllTokenAccounts();
 // const instructions: TransactionInstruction[] = [];
-const computeBudgetInstructions = await initBot();
-await main(signature, computeBudgetInstructions);
+// const computeBudgetInstructions = await initBot();
+// await main(signature, computeBudgetInstructions);
 
 // instructions.push(...computeBudgetInstructions);
 // const swapResult = await MeteoraDLMMSwap(
@@ -88,4 +88,4 @@ await main(signature, computeBudgetInstructions);
 // const tokenAccount = await solanaWeb3Service.closeTokenAccount("9NFEfLVZgNsMjdQZ3UyYzFq61KzuZgUqS8vHF9NuYc1G")
 // console.log(tokenAccount)
 // console.log(solanaWeb3Service.tokenAccounts)
-})();
+// })();
