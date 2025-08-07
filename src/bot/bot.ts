@@ -3,7 +3,7 @@ import { transactionAnalyzer } from "../sdk/solana/solanaTransactionAnalyzer";
 import { raydiumInstance } from "../sdk/raydium/config";
 import { getSwapInstance } from "../utils/helper";
 import { logger } from "../logger/logger";
-import { TransactionInstruction, PublicKey } from "@solana/web3.js";
+import { TransactionInstruction, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { NATIVE_MINT } from "@solana/spl-token";
 
 export const initBot = async (): Promise<TransactionInstruction[]> => {
@@ -60,7 +60,7 @@ export const copyTransaction = async (
       });
     }
 
-    let inputAmount = 0.05 * 1e9; // Use raw amount for first swap
+    let inputAmount = 0.05 * LAMPORTS_PER_SOL; // Use raw amount for first swap
     let initInputAmount = inputAmount;
     let lastSwapOutputAmount: number = 0;
 
@@ -91,7 +91,7 @@ export const copyTransaction = async (
     if (initInputAmount > lastSwapOutputAmount) {
       throw new Error(`Insufficient output amount: ${lastSwapOutputAmount} < ${initInputAmount}`)
     } else {
-      const txHash = await solanaWeb3Service.sendTransactionWithTip(
+      const txHash = await solanaWeb3Service.sendTransactionViaHeliusSender(
         instructions,
         addressLookupTableAccounts
       );

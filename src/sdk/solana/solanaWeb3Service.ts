@@ -26,24 +26,22 @@ import {
 } from "@solana/spl-token";
 import bs58 from "bs58";
 import { RPC_ENDPOINT, PRIVATE_KEY } from "../../config/config";
-import { CONFIRMED, FINALIZED } from "../../config/constant";
+import {
+  CONFIRMED,
+  FINALIZED,
+  JITO_TIP_ACCOUNTS,
+  JITO_TIP_AMOUNT,
+  JITO_ENDPOINT,
+  HELIUS_TIP_ACCOUNTS,
+  HELIUS_TIP_AMOUNT,
+  HELIUS_ENDPOINT,
+} from "../../config/constant";
+import axios from "axios";
 
 class SolanaWeb3Service {
   private keypair: Keypair;
   public connection: Connection;
   public userAddress: PublicKey;
-  public tipAccounts = [
-    "4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE",
-    "D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ",
-    "9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta",
-    "5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn",
-    "2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD",
-    "2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ",
-    "wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF",
-    "3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT",
-    "4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey",
-    "4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or",
-  ];
 
   constructor(rpcEndpoint: string) {
     this.keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -72,7 +70,7 @@ class SolanaWeb3Service {
         units: 250000,
       }),
       ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 10000,
+        microLamports: 50000,
       }),
     ];
 
@@ -269,7 +267,59 @@ class SolanaWeb3Service {
     }
   }
 
-  public async sendTransactionWithTip(
+  public async sendTransactionViaJito(
+    instructions: TransactionInstruction[],
+    alts: AddressLookupTableAccount[]
+  ): Promise<string> {
+    try {
+      const jitoFeeWallet = new PublicKey(
+        JITO_TIP_ACCOUNTS[Math.floor(JITO_TIP_ACCOUNTS.length * Math.random())]
+      );
+      const blockhash = (await this.connection.getLatestBlockhash(FINALIZED))
+        .blockhash;
+      const jitTipTxFeeMessage = new TransactionMessage({
+        payerKey: this.keypair.publicKey,
+        recentBlockhash: blockhash,
+        instructions: [
+          SystemProgram.transfer({
+            fromPubkey: this.keypair.publicKey,
+            toPubkey: jitoFeeWallet,
+            lamports: Math.floor(JITO_TIP_AMOUNT * LAMPORTS_PER_SOL),
+          }),
+        ],
+      }).compileToV0Message();
+      const jitoFeeTx = new VersionedTransaction(jitTipTxFeeMessage);
+      jitoFeeTx.sign([this.keypair]);
+
+      const messageV0 = new TransactionMessage({
+        payerKey: this.keypair.publicKey,
+        recentBlockhash: blockhash,
+        instructions: instructions,
+      }).compileToV0Message(alts);
+
+      const transaction = new VersionedTransaction(messageV0);
+      transaction.sign([this.keypair]);
+
+      const serializedJitoFeeTx = bs58.encode(jitoFeeTx.serialize());
+      const serializedTx = bs58.encode(transaction.serialize());
+      const serializedTransactions = [serializedJitoFeeTx, serializedTx];
+
+      const res = await axios.post(JITO_ENDPOINT, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "sendBundle",
+        params: [serializedTransactions],
+      });
+
+      console.log(res.data)
+
+      return res.data;
+    } catch (error: any) {
+      throw new Error(`Error sending transaction via Jito: ${error.message}`);
+    }
+  }
+
+  public async sendTransactionViaHeliusSender(
     instructions: TransactionInstruction[],
     alts: AddressLookupTableAccount[]
   ): Promise<string> {
@@ -279,9 +329,11 @@ class SolanaWeb3Service {
       const tipInstruction = SystemProgram.transfer({
         fromPubkey: this.keypair.publicKey,
         toPubkey: new PublicKey(
-          this.tipAccounts[Math.floor(Math.random() * this.tipAccounts.length)]
+          HELIUS_TIP_ACCOUNTS[
+            Math.floor(Math.random() * HELIUS_TIP_ACCOUNTS.length)
+          ]
         ),
-        lamports: 0.001 * LAMPORTS_PER_SOL,
+        lamports: HELIUS_TIP_AMOUNT * LAMPORTS_PER_SOL,
       });
       instructions.push(tipInstruction);
 
@@ -294,8 +346,7 @@ class SolanaWeb3Service {
       const transaction = new VersionedTransaction(messageV0);
       transaction.sign([this.keypair]);
 
-      const endpoint = "http://ewr-sender.helius-rpc.com/fast"; // choose the region closest to your servers
-      const response = await fetch(endpoint, {
+      const response = await fetch(HELIUS_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -317,7 +368,7 @@ class SolanaWeb3Service {
         throw new Error(json.error.message);
       }
       const signature = json.result;
-      return signature
+      return signature;
     } catch (error: any) {
       throw new Error(`Error sending transaction with tip: ${error.message}`);
     }
