@@ -86,7 +86,7 @@ export class MeteoraDLMMSwap {
         );
 
       const swapIx = await this.dlmmPool.program.methods
-        .swap2(inputAmount, new BN(0), { slices })
+        .swap2(inputAmount, swapQuote.minOutAmount, { slices })
         .accountsPartial({
           lbPair: this.dlmmPool.pubkey,
           reserveX: this.dlmmPool.lbPair.reserveX,

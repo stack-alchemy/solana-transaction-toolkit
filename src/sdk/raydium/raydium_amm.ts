@@ -105,7 +105,7 @@ export class RaydiumAMMSwap {
           owner: this.raydium.owner?.publicKey!,
         },
         amountIn: inputAmount,
-        amountOut: new BN(0),
+        amountOut: out.minAmountOut,
         fixedSide: "in",
       });
 
